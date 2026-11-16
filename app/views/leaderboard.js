@@ -20,6 +20,8 @@ const CSS = `
 .tie{margin-left:6px;padding:0 5px;border:var(--bd);border-radius:99px;font-size:.58rem;font-style:normal;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--d);vertical-align:1px}
 .vt{display:block;width:100%;height:5px;margin-top:4px;border-radius:3px;background:#22313d;overflow:hidden}
 .bar{display:block;height:100%;border-radius:3px;background:var(--ok);width:var(--w)}
+.lbrange{margin:4px 0 0;font-size:.7rem;color:var(--d)}
+@media(min-width:700px){.lb.vlist{height:calc(100vh - 272px)}}
 `;
 
 /** Add the table's stylesheet once per document; a second mount must not stack a second copy. */
@@ -45,14 +47,60 @@ function metric(entry, column) {
   return Number.isFinite(number) ? count(number) : display;
 }
 
-/** A rate column as the width of its bar: '950587' -> 95.0587, or null for a column that is not a
- *  rate (a byte count has no 100 % to be a fraction of, so it gets no bar). */
-function rateWidth(entry, column) {
+/** A rate column's value in percent: '950587' -> 95.0587, or null for a column that is not a rate (a
+ *  byte count has no 100 % to be a fraction of, so it gets no bar). */
+function rateValue(entry, column) {
   if (!String(column.source || '').endsWith('_micro')) return null;
   const display = entry.display ? entry.display[column.key] : null;
-  const percent = Number(display) / 10000;
-  if (display == null || !Number.isFinite(percent)) return null;
-  return Math.max(0, Math.min(100, percent));
+  if (display == null || display === '') return null;
+  const value = Number(display) / 10000;
+  return Number.isFinite(value) ? value : null;
+}
+
+/**
+ * The range the bars are drawn against: this column's own lowest and highest rate over the entries
+ * being shown. A field where every entry sits between 93 % and 95 % is unreadable as absolute width —
+ * every bar would be 95 % full — so the bar measures the row against its field, not against 100 %.
+ * Null when the column holds no rate at all.
+ */
+function fieldRange(entries, column) {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const entry of entries) {
+    const rate = rateValue(entry, column);
+    if (rate == null) continue;
+    if (rate < lo) lo = rate;
+    if (rate > hi) hi = rate;
+  }
+  return lo === Infinity ? null : { lo, hi };
+}
+
+/** A rate as a fraction of its field's range: 0 % of the track at the field's minimum, 100 % at its
+ *  maximum. A flat field (one entry, or all equal) draws every bar at half, never a division by zero. */
+function barWidth(rate, range) {
+  if (!range) return null;
+  if (range.hi === range.lo) return 50;
+  return ((rate - range.lo) / (range.hi - range.lo)) * 100;
+}
+
+const percent = (value) => `${value.toFixed(2)}%`;
+
+/**
+ * The legend the bars need. A bar zoomed to its field's range magnifies the differences, and this
+ * line says what it is magnifying: without it the bar would be a lie by omission.
+ */
+function captionOf(ranges, rateColumns) {
+  const parts = [];
+  for (const column of rateColumns) {
+    const range = ranges.get(column.key);
+    if (!range) continue;
+    const span = range.hi === range.lo ? 'all entries level' : `${percent(range.lo)}–${percent(range.hi)}`;
+    parts.push(rateColumns.length > 1 ? `${column.title} ${span}` : span);
+  }
+  if (!parts.length) return '';
+  return rateColumns.length > 1
+    ? `bars span each column's own range: ${parts.join(' · ')}`
+    : `bars span this field's range: ${parts[0]}`;
 }
 
 /** A stable hue per handle, so an entry without a picture still gets its own colour. */
@@ -101,6 +149,9 @@ export async function mount({ root, params, signal, setTitle }) {
 
   // The column a tie is read from: the ranking metric itself (the first rate), else the first column.
   const rateColumn = columns.find((column) => String(column.source || '').endsWith('_micro')) || columns[0] || null;
+  // The columns that get a bar: the rates. Their ranges are measured per load, in paint().
+  const rateColumns = columns.filter((column) => String(column.source || '').endsWith('_micro'));
+  let ranges = new Map(); // column key -> { lo, hi } | null, over the entries the table is showing
 
   // One grid template for the header and every row, so the columns line up by construction.
   const template = `44px minmax(0,1fr)${' 74px'.repeat(columns.length)}`;
@@ -124,23 +175,27 @@ export async function mount({ root, params, signal, setTitle }) {
     ),
   );
   const list = el('div', { class: 'lb' });
+  // The bars are drawn against the field's own range, so they need a legend saying which range that
+  // is: it sits between the header and the rows, one muted line, filled in by paint().
+  const rangeNote = el('p', { class: 'lbrange' });
   root.replaceChildren(
     el('div', { class: 'crumbs' }, [
       el('a', { href: `#/bounty/${encodeURIComponent(params.slug)}`, text: `← ${competition.title || params.slug}` }),
     ]),
     el('h1', { text: data.title || 'Leaderboard' }),
     summary,
-    el('div', {}, [head, list]),
+    el('div', {}, [head, rangeNote, list]),
   );
 
   // The rows the virtual window is painting: a tie is read from the row above it in this list.
   let showing = entries;
 
-  /** A metric cell: the number, and under a rate a bar whose width is that rate — in addition to
-   *  the number, never instead of it. */
+  /** A metric cell: the number, and under a rate a bar whose width is that rate within this field's
+   *  range — in addition to the number, never instead of it. */
   function metricCell(entry, column) {
     const text = metric(entry, column);
-    const width = rateWidth(entry, column);
+    const rate = rateValue(entry, column);
+    const width = rate == null ? null : barWidth(rate, ranges.get(column.key));
     if (width == null) return el('span', { class: 'val', text });
     return el('span', { class: 'val' }, [
       text,
@@ -184,6 +239,11 @@ export async function mount({ root, params, signal, setTitle }) {
       `${phaseText} · ${count(ranked)} ranked of ${count((next.entries || []).length)} entries${ends}${closed}`,
     );
     showing = next.entries || [];
+    // One range per rate column, over exactly the entries being drawn, so a reload rescales the bars
+    // with the data instead of pinning them to whatever the first answer held.
+    ranges = new Map(rateColumns.map((column) => [column.key, fieldRange(showing, column)]));
+    setText(rangeNote, captionOf(ranges, rateColumns));
+    rangeNote.hidden = rangeNote.textContent === '';
     rows.update(showing);
   }
 
