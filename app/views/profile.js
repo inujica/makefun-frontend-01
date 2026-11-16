@@ -12,6 +12,21 @@ const PAGE = 12;
 /** A stat cell: the number on top, the label under it. */
 const stat = (label, value) => el('div', { class: 'stat' }, [el('b', { text: value }), el('span', { text: label })]);
 
+/** A stable hue per handle, so a profile without a picture still gets its own colour. */
+function hueOf(text) {
+  let hash = 0;
+  for (const character of String(text || '?')) hash = (hash * 31 + character.charCodeAt(0)) % 360;
+  return hash;
+}
+
+/** `image` is the avatar as a plain /api/avatars/... path; `avatar` is the same picture as an
+ *  object ({ url, url_small, updated_at }) on live data, or a path. Either may be missing. */
+function avatarUrlOf(profile) {
+  const avatar = profile.avatar;
+  const path = profile.image || (typeof avatar === 'string' ? avatar : avatar && (avatar.url || avatar.url_small));
+  return absoluteUrl(path);
+}
+
 export async function mount({ root, params, signal, setTitle }) {
   const path = `/profiles/${encodeURIComponent(params.handle)}`;
   const profile = await cachedGet(path, { signal });
@@ -21,23 +36,33 @@ export async function mount({ root, params, signal, setTitle }) {
   setTitle(`${profile.display_name || handle} · make.fun`);
 
   // --- header: avatar, name, handle, bio -------------------------------------
-  const avatarUrl = absoluteUrl(profile.image || profile.avatar);
-  const initials = handle.slice(0, 2).toUpperCase();
-  const avatar = avatarUrl
-    ? el('img', {
-        class: 'av',
-        alt: '',
-        width: '56',
-        height: '56',
-        loading: 'lazy',
-        decoding: 'async',
-        // make.fun sends Cross-Origin-Resource-Policy: same-origin, so the image only loads as a
-        // CORS request: crossorigin must be set before src, and it is, in this key order.
-        crossorigin: 'anonymous',
-        src: avatarUrl,
-        onerror: (event) => event.currentTarget.replaceWith(el('div', { class: 'av' })),
-      })
-    : el('div', { class: 'av' });
+  // The picture is a CORS request (make.fun sends Cross-Origin-Resource-Policy: same-origin on
+  // /api/avatars), so crossorigin is set before src; if it will not load, the header falls back to
+  // the initial of the handle, drawn in CSS, rather than to an empty circle or a broken image.
+  const avatarUrl = avatarUrlOf(profile);
+  const avatarFallback = () =>
+    el('div', {
+      class: 'av avf',
+      'aria-hidden': 'true',
+      text: (profile.display_name || handle).slice(0, 1),
+      style: { '--h': hueOf(handle), 'font-size': '1.15rem' },
+    });
+  let avatar;
+  if (avatarUrl) {
+    avatar = el('img', {
+      class: 'av',
+      alt: '',
+      width: '56',
+      height: '56',
+      loading: 'lazy',
+      decoding: 'async',
+      crossorigin: 'anonymous',
+    });
+    avatar.addEventListener('error', () => avatar.replaceWith(avatarFallback()));
+    avatar.src = avatarUrl;
+  } else {
+    avatar = avatarFallback();
+  }
 
   const links = el('span', { class: 'chips' }, [
     profile.github_login ? el('a', { class: 'chip', href: `https://github.com/${profile.github_login}`, text: `github/${profile.github_login}` }) : null,

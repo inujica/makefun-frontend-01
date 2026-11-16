@@ -33,6 +33,16 @@ function chipRow(bounty) {
   ]);
 }
 
+/** The right end of the row's second line: the category as a small tag and a chevron, so the gap
+ *  between the chips and the pot says "this row opens" without adding a control. The API has no
+ *  image on a board row, so there is nothing to show but the category. */
+function metaRow(bounty) {
+  return el('span', { class: 'meta' }, [
+    bounty.category ? el('span', { class: 'chip cat', text: bounty.category }) : null,
+    el('span', { class: 'chev', 'aria-hidden': 'true', text: '→' }),
+  ]);
+}
+
 export async function mount({ root, signal, setTitle }) {
   setTitle('Open bounties · make.fun');
 
@@ -40,7 +50,10 @@ export async function mount({ root, signal, setTitle }) {
   const heading = el('h1', { text: 'Open bounties' });
   const summary = el('p', { class: 'sub' });
   const list = el('div', { class: 'board' });
-  root.replaceChildren(heading, summary, list);
+  // The list is a scroller, so its last row is cut by the viewport: a closing line under it gives the
+  // page an end instead of looking truncated. It says what the list holds, not what it hides.
+  const end = el('p', { class: 'end' });
+  root.replaceChildren(heading, summary, list, end);
 
   const owned = new AbortController(); // refresh()'s fetches, cancelled when the route changes
   let all = [];
@@ -50,7 +63,7 @@ export async function mount({ root, signal, setTitle }) {
     el('a', { class: 'row', href: `#/bounty/${encodeURIComponent(bounty.slug)}` }, [
       el('span', { class: 'title', text: bounty.title }),
       el('span', { class: 'pot', text: potOf(bounty) }),
-      chipRow(bounty),
+      el('span', { class: 'line' }, [chipRow(bounty), metaRow(bounty)]),
     ]);
 
   // The row height lives in the stylesheet (`.board{--rowh:...}`): 116 px on a phone, where the three
@@ -63,6 +76,7 @@ export async function mount({ root, signal, setTitle }) {
     const needle = query.trim().toLowerCase();
     const shown = needle ? all.filter((bounty) => String(bounty.title || '').toLowerCase().includes(needle)) : all;
     rows.update(shown);
+    setText(end, `${count(shown.length)} ${needle ? 'matching' : 'open'} · end of list`);
     if (needle) {
       setText(summary, `${count(shown.length)} of ${count(all.length)} bounties match “${query.trim()}”`);
       return;

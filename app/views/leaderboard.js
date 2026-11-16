@@ -3,12 +3,31 @@
 // (a bounty scored on judge win rate and one scored on CPU microseconds both work), and the header
 // is built from the same array, so the table cannot drift from the data.
 
-import { cachedGet } from '../api.js';
+import { absoluteUrl, cachedGet } from '../api.js';
 import { el, setText, virtualList } from '../dom.js';
 import { count, date, timeLeft } from '../format.js';
 
 /** Two metrics fit a phone; the rest of the columns are already in the same entry object. */
 const METRIC_COLUMNS = 2;
+
+/** Rules only this table needs, so they cost nothing on the first load: this file arrives by
+ *  import() with the view. One <style>, added once, no request. */
+const CSS = `
+.lb .avs,.lb .avf{width:30px;height:30px;flex:0 0 auto;font-size:.78rem}
+.lb .avs{border-radius:50%;border:var(--bd);background:var(--c2);object-fit:cover}
+.who{display:flex;align-items:center;gap:8px}
+.wt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tie{margin-left:6px;padding:0 5px;border:var(--bd);border-radius:99px;font-size:.58rem;font-style:normal;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--d);vertical-align:1px}
+.vt{display:block;width:100%;height:5px;margin-top:4px;border-radius:3px;background:#22313d;overflow:hidden}
+.bar{display:block;height:100%;border-radius:3px;background:var(--ok);width:var(--w)}
+`;
+
+/** Add the table's stylesheet once per document; a second mount must not stack a second copy. */
+function installStyles() {
+  if (document.getElementById('lb-css')) return;
+  const style = el('style', { id: 'lb-css', text: CSS });
+  document.head.append(style);
+}
 
 /**
  * One metric as make.fun's own leaderboard prints it: a `_micro` source is a fraction in
@@ -26,6 +45,50 @@ function metric(entry, column) {
   return Number.isFinite(number) ? count(number) : display;
 }
 
+/** A rate column as the width of its bar: '950587' -> 95.0587, or null for a column that is not a
+ *  rate (a byte count has no 100 % to be a fraction of, so it gets no bar). */
+function rateWidth(entry, column) {
+  if (!String(column.source || '').endsWith('_micro')) return null;
+  const display = entry.display ? entry.display[column.key] : null;
+  const percent = Number(display) / 10000;
+  if (display == null || !Number.isFinite(percent)) return null;
+  return Math.max(0, Math.min(100, percent));
+}
+
+/** A stable hue per handle, so an entry without a picture still gets its own colour. */
+function hueOf(text) {
+  let hash = 0;
+  for (const character of String(text || '?')) hash = (hash * 31 + character.charCodeAt(0)) % 360;
+  return hash;
+}
+
+/** The letter a row falls back to when make.fun has no avatar for it, or its avatar will not load:
+ *  a coloured initial, drawn in CSS, costing no request. */
+const initial = (handle) =>
+  el('span', { class: 'avf', 'aria-hidden': 'true', text: (handle || '?').slice(0, 1), style: { '--h': hueOf(handle) } });
+
+/**
+ * A 28 px round avatar. make.fun sends `Cross-Origin-Resource-Policy: same-origin` on /api/avatars,
+ * so the image only loads as a CORS request: crossorigin is set before src, and an error swaps in
+ * the initial rather than leaving a broken-image row.
+ */
+function avatar(handle, image) {
+  const url = absoluteUrl(image);
+  if (!url) return initial(handle);
+  const node = el('img', {
+    class: 'avs',
+    alt: '',
+    width: '30',
+    height: '30',
+    loading: 'lazy',
+    decoding: 'async',
+    crossorigin: 'anonymous',
+  });
+  node.addEventListener('error', () => node.replaceWith(initial(handle)));
+  node.src = url;
+  return node;
+}
+
 export async function mount({ root, params, signal, setTitle }) {
   const path = `/competitions/${encodeURIComponent(params.slug)}/leaderboard`;
   const data = await cachedGet(path, { signal });
@@ -34,6 +97,10 @@ export async function mount({ root, params, signal, setTitle }) {
   const columns = (data.columns || []).filter((column) => !column.hidden).slice(0, METRIC_COLUMNS);
   const entries = data.entries || [];
   setTitle(`Leaderboard · ${competition.title || params.slug} · make.fun`);
+  installStyles();
+
+  // The column a tie is read from: the ranking metric itself (the first rate), else the first column.
+  const rateColumn = columns.find((column) => String(column.source || '').endsWith('_micro')) || columns[0] || null;
 
   // One grid template for the header and every row, so the columns line up by construction.
   const template = `44px minmax(0,1fr)${' 74px'.repeat(columns.length)}`;
@@ -66,16 +133,42 @@ export async function mount({ root, params, signal, setTitle }) {
     el('div', {}, [head, list]),
   );
 
-  const renderRow = (entry) => {
+  // The rows the virtual window is painting: a tie is read from the row above it in this list.
+  let showing = entries;
+
+  /** A metric cell: the number, and under a rate a bar whose width is that rate — in addition to
+   *  the number, never instead of it. */
+  function metricCell(entry, column) {
+    const text = metric(entry, column);
+    const width = rateWidth(entry, column);
+    if (width == null) return el('span', { class: 'val', text });
+    return el('span', { class: 'val' }, [
+      text,
+      el('span', { class: 'vt', 'aria-hidden': 'true' }, [
+        el('span', { class: 'bar', style: { '--w': `${width.toFixed(2)}%` } }),
+      ]),
+    ]);
+  }
+
+  const renderRow = (entry, index) => {
+    const handle = entry.handle || 'unknown';
     const detail = entry.title || entry.submission_id || '';
     const status = entry.status && entry.status !== 'finished' ? ` · ${entry.status}` : '';
+    const previous = index > 0 ? showing[index - 1] : null;
+    const tie = Boolean(
+      previous && rateColumn && metric(entry, rateColumn) !== '—' && metric(entry, rateColumn) === metric(previous, rateColumn),
+    );
     return el('a', { class: 'lbrow', href: `#/u/${encodeURIComponent(entry.handle || '')}`, style: { 'grid-template-columns': template } }, [
       el('span', { class: `rank${entry.rank <= 3 ? ' prize' : ''}`, text: entry.rank == null ? '—' : `#${entry.rank}` }),
       el('span', { class: 'who' }, [
-        entry.handle || 'unknown',
-        el('em', { text: `${detail}${status}` }),
+        avatar(handle, entry.image),
+        el('span', { class: 'wt' }, [
+          handle,
+          tie ? el('i', { class: 'tie', title: 'same rate as the entry above', text: 'tie' }) : null,
+          el('em', { text: `${detail}${status}` }),
+        ]),
       ]),
-      columns.map((column) => el('span', { class: 'val', text: metric(entry, column) })),
+      columns.map((column) => metricCell(entry, column)),
     ]);
   };
 
@@ -90,7 +183,8 @@ export async function mount({ root, params, signal, setTitle }) {
       summary,
       `${phaseText} · ${count(ranked)} ranked of ${count((next.entries || []).length)} entries${ends}${closed}`,
     );
-    rows.update(next.entries || []);
+    showing = next.entries || [];
+    rows.update(showing);
   }
 
   paint(data);

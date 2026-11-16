@@ -9,7 +9,7 @@
 <title>make.fun bounties</title>
 <style>
 *{box-sizing:border-box}
-:root{--bg:#0a0e13;--c:#121b24;--c2:#182430;--fg:#e8eef6;--d:#9fb0c0;--ok:#43e08a;--w:#f7c948;--bad:#ff8b82;--lk:#8cc8ff;--bd:1px solid #26343f;--r:12px}
+:root{--bg:#0a0e13;--c:#121b24;--c2:#182430;--fg:#e8eef6;--d:#b4c3d0;--ok:#43e08a;--w:#f7c948;--bad:#ff8b82;--lk:#8cc8ff;--bd:1px solid #26343f;--r:12px}
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 a{color:var(--lk);text-decoration:none}a:hover{text-decoration:underline}
 h1,h2,h3,p{margin:0}h1{font-size:1.3rem;line-height:1.25}h2{font-size:.95rem}h3{font-size:.9rem}p{margin:.45em 0}
@@ -26,7 +26,7 @@ header{position:sticky;top:0;z-index:9;display:flex;flex-wrap:wrap;align-items:c
 main{max-width:960px;margin:0 auto;padding:12px 12px 60px}
 .crumbs,.sub{font-size:.85rem;color:var(--d)}.crumbs{margin-bottom:8px}.sub{margin:2px 0 10px}
 .card,.skel,.sol,.stat,.vlist{border:var(--bd);border-radius:var(--r);background:var(--c)}
-.vlist{position:relative;overflow-y:auto;height:calc(100vh - 200px);min-height:320px;overscroll-behavior:contain}
+.vlist{position:relative;overflow-y:auto;height:calc(100vh - 236px);min-height:320px;overscroll-behavior:contain}
 .vspacer{width:1px}.vwin{position:absolute;top:0;left:0;right:0}
 .vwin>*{height:var(--rowh,64px)}
 .board{--rowh:116px}.lb{--rowh:64px}
@@ -34,7 +34,12 @@ main{max-width:960px;margin:0 auto;padding:12px 12px 60px}
 .row:hover{background:var(--c2);text-decoration:none}
 .title{grid-column:1;font-weight:600;line-height:1.25;max-height:2.5em;overflow:hidden}
 .pot{grid-column:2;grid-row:1/3;align-self:center;text-align:right;font-size:1.3rem;font-weight:800;color:var(--ok)}
-.chips{grid-column:1;display:flex;gap:6px;flex-wrap:wrap}
+.line{grid-column:1;display:flex;align-items:center;gap:8px;min-width:0}
+.chips{display:flex;gap:6px;flex-wrap:wrap;min-width:0}
+.meta{margin-left:auto;display:flex;align-items:center;gap:5px;min-width:0;font-size:.75rem;color:var(--d);white-space:nowrap}
+.cat{display:block;overflow:hidden;text-overflow:ellipsis;max-width:34vw}
+.chev{color:var(--fg);font-weight:700;flex:0 0 auto}
+.row:hover .chev{transform:translateX(2px)}
 .chip{padding:2px 8px;border:var(--bd);border-radius:99px;font-size:.75rem;color:var(--d);white-space:nowrap}
 .chip.fee{background:var(--c2);color:var(--fg)}.chip.time{color:var(--fg)}
 .chip.soon{background:var(--w);color:#0a0e13;font-weight:700}
@@ -54,6 +59,8 @@ main{max-width:960px;margin:0 auto;padding:12px 12px 60px}
 .val{text-align:right;font-size:.82rem;font-weight:600}
 .prof{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .av{width:56px;height:56px;border-radius:50%;border:var(--bd);background:var(--c2);object-fit:cover}
+.avf{display:grid;place-items:center;border-radius:50%;border:var(--bd);background:hsl(var(--h,210) 40% 30%);color:#eaf2fa;font-weight:700;text-transform:uppercase}
+.end{margin:14px 0 0;padding:12px 0 2px;border-top:var(--bd);text-align:center;font-size:.8rem;color:var(--d)}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(78px,1fr));gap:8px;margin-bottom:12px}
 .stat b{display:block;font-size:1.05rem}
 .stat span{font-size:.62rem;letter-spacing:.05em;text-transform:uppercase;color:var(--d)}
@@ -63,7 +70,7 @@ main{max-width:960px;margin:0 auto;padding:12px 12px 60px}
 .btn.ghost{background:var(--c);color:var(--fg);border:var(--bd);font-size:.85rem;cursor:pointer}
 .skel{height:76px;margin-bottom:8px;animation:pulse 1.1s ease-in-out infinite}
 .err{border-color:var(--bad);padding:14px}
-@media(min-width:700px){.find{order:0;flex:1 1 240px}.board{--rowh:96px}.split{grid-template-columns:minmax(0,1.5fr) minmax(260px,1fr);align-items:start}.split aside{position:sticky;top:60px}}
+@media(min-width:700px){.find{order:0;flex:1 1 240px}.board{--rowh:96px}.vlist{height:calc(100vh - 200px)}.split{grid-template-columns:minmax(0,1.5fr) minmax(260px,1fr);align-items:start}.split aside{position:sticky;top:60px}}
 @keyframes pulse{50%{opacity:.55}}
 </style>
 </head>
