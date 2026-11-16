@@ -58,15 +58,17 @@ function rateValue(entry, column) {
 }
 
 /**
- * The range the bars are drawn against: this column's own lowest and highest rate over the entries
- * being shown. A field where every entry sits between 93 % and 95 % is unreadable as absolute width —
- * every bar would be 95 % full — so the bar measures the row against its field, not against 100 %.
- * Null when the column holds no rate at all.
+ * The range the bars are drawn against: this column's lowest and highest rate over the rows the table
+ * is painting right now — the virtual window, not the field. A field where every entry sits between
+ * 93 % and 95 % is unreadable as absolute width (every bar would be 95 % full), and its outliers are
+ * unreadable as a field range too (every bar would be ~100 % full): measured over the rows on screen,
+ * the whole track is spent on the differences a reader can actually see. Null when none of those rows
+ * has a rate in this column.
  */
-function fieldRange(entries, column) {
+function windowRange(rows, column) {
   let lo = Infinity;
   let hi = -Infinity;
-  for (const entry of entries) {
+  for (const entry of rows) {
     const rate = rateValue(entry, column);
     if (rate == null) continue;
     if (rate < lo) lo = rate;
@@ -75,8 +77,9 @@ function fieldRange(entries, column) {
   return lo === Infinity ? null : { lo, hi };
 }
 
-/** A rate as a fraction of its field's range: 0 % of the track at the field's minimum, 100 % at its
- *  maximum. A flat field (one entry, or all equal) draws every bar at half, never a division by zero. */
+/** A rate as a fraction of the rows on screen's range: 0 % of the track at the lowest rate in the
+ *  window, 100 % at the highest. A level window (one row, or all equal) draws every bar at half,
+ *  never a division by zero. */
 function barWidth(rate, range) {
   if (!range) return null;
   if (range.hi === range.lo) return 50;
@@ -86,21 +89,26 @@ function barWidth(rate, range) {
 const percent = (value) => `${value.toFixed(2)}%`;
 
 /**
- * The legend the bars need. A bar zoomed to its field's range magnifies the differences, and this
- * line says what it is magnifying: without it the bar would be a lie by omission.
+ * The legend the bars need, with the numbers it was computed from. A bar zoomed to the rows on screen
+ * magnifies the differences between them, and this line says what it is magnifying: without it the bar
+ * would be a lie by omission. It is rewritten whenever the window moves, so it always names the rows
+ * that are actually drawn.
  */
 function captionOf(ranges, rateColumns) {
   const parts = [];
+  let level = true;
   for (const column of rateColumns) {
     const range = ranges.get(column.key);
     if (!range) continue;
-    const span = range.hi === range.lo ? 'all entries level' : `${percent(range.lo)}–${percent(range.hi)}`;
+    if (range.hi !== range.lo) level = false;
+    const span = range.hi === range.lo ? 'level' : `${percent(range.lo)}–${percent(range.hi)}`;
     parts.push(rateColumns.length > 1 ? `${column.title} ${span}` : span);
   }
   if (!parts.length) return '';
+  if (level) return 'all rows on screen level';
   return rateColumns.length > 1
-    ? `bars span each column's own range: ${parts.join(' · ')}`
-    : `bars span this field's range: ${parts[0]}`;
+    ? `bars span the rows on screen: ${parts.join(' · ')}`
+    : `bars span the rows on screen: ${parts[0]}`;
 }
 
 /** A stable hue per handle, so an entry without a picture still gets its own colour. */
@@ -149,9 +157,10 @@ export async function mount({ root, params, signal, setTitle }) {
 
   // The column a tie is read from: the ranking metric itself (the first rate), else the first column.
   const rateColumn = columns.find((column) => String(column.source || '').endsWith('_micro')) || columns[0] || null;
-  // The columns that get a bar: the rates. Their ranges are measured per load, in paint().
+  // The columns that get a bar: the rates. Their ranges are measured over the rows on screen, in
+  // onWindow(), every time the window moves.
   const rateColumns = columns.filter((column) => String(column.source || '').endsWith('_micro'));
-  let ranges = new Map(); // column key -> { lo, hi } | null, over the entries the table is showing
+  let ranges = new Map(); // column key -> { lo, hi } | null, over the rows the window is painting
 
   // One grid template for the header and every row, so the columns line up by construction.
   const template = `44px minmax(0,1fr)${' 74px'.repeat(columns.length)}`;
@@ -175,8 +184,8 @@ export async function mount({ root, params, signal, setTitle }) {
     ),
   );
   const list = el('div', { class: 'lb' });
-  // The bars are drawn against the field's own range, so they need a legend saying which range that
-  // is: it sits between the header and the rows, one muted line, filled in by paint().
+  // The bars are drawn against the rows on screen, so they need a legend saying which range that is:
+  // it sits between the header and the rows, one muted line, rewritten by onWindow() as they move.
   const rangeNote = el('p', { class: 'lbrange' });
   root.replaceChildren(
     el('div', { class: 'crumbs' }, [
@@ -227,7 +236,18 @@ export async function mount({ root, params, signal, setTitle }) {
     ]);
   };
 
-  const rows = virtualList(list, entries, renderRow, { overscan: 5 }); // height: `.lb{--rowh:64px}`
+  const rows = virtualList(list, entries, renderRow, {
+    overscan: 5, // height: `.lb{--rowh:64px}`
+    // The bars measure the rows on screen, so every window the list paints rescales them: the ranges
+    // are taken over exactly the rows about to be built, then the caption is rewritten to say so.
+    // A handful of numbers per scroll frame, and the widths are in place before the rows are drawn.
+    onWindow(start, end, items) {
+      const onScreen = items.slice(start, end);
+      ranges = new Map(rateColumns.map((column) => [column.key, windowRange(onScreen, column)]));
+      setText(rangeNote, captionOf(ranges, rateColumns));
+      rangeNote.hidden = rangeNote.textContent === '';
+    },
+  });
 
   function paint(next) {
     const ranked = (next.entries || []).filter((entry) => entry.ranked).length;
@@ -239,11 +259,8 @@ export async function mount({ root, params, signal, setTitle }) {
       `${phaseText} · ${count(ranked)} ranked of ${count((next.entries || []).length)} entries${ends}${closed}`,
     );
     showing = next.entries || [];
-    // One range per rate column, over exactly the entries being drawn, so a reload rescales the bars
-    // with the data instead of pinning them to whatever the first answer held.
-    ranges = new Map(rateColumns.map((column) => [column.key, fieldRange(showing, column)]));
-    setText(rangeNote, captionOf(ranges, rateColumns));
-    rangeNote.hidden = rangeNote.textContent === '';
+    // A reload replaces the rows, and rows.update() repaints the window, which rescales the bars with
+    // the data instead of pinning them to whatever the first answer held.
     rows.update(showing);
   }
 

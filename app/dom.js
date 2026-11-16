@@ -62,7 +62,10 @@ export function skeleton(count = 4) {
 /** Render only the rows in view: a spacer of rows.length * rowHeight keeps the scrollbar honest, and
  *  one window div, moved with a translate, holds the visible rows plus `overscan` each side — so a
  *  6000-row leaderboard is twenty nodes. The row height is read from the container's --rowh custom
- *  property, so the stylesheet keeps ownership of it and a breakpoint change is picked up on resize. */
+ *  property, so the stylesheet keeps ownership of it and a breakpoint change is picked up on resize.
+ *  options.onWindow(start, end, rows) is told the slice about to be built, before it is built, so a
+ *  renderer can measure the rows on screen (a bar scaled to them, a count of them) and have the
+ *  answer in hand while it draws — it runs only when the window actually moves. */
 export function virtualList(container, rows, renderRow, options = {}) {
   const measure = () => {
     const declared = parseFloat(getComputedStyle(container).getPropertyValue('--rowh'));
@@ -89,6 +92,7 @@ export function virtualList(container, rows, renderRow, options = {}) {
     if (start === first && end === last) return;
     first = start;
     last = end;
+    if (options.onWindow) options.onWindow(start, end, list);
     windowBox.style.transform = `translateY(${start * rowHeight}px)`;
     const batch = document.createDocumentFragment();
     for (let i = start; i < end; i++) batch.append(renderRow(list[i], i));
